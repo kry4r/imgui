@@ -6,4 +6,5 @@ add_library(imgui STATIC
     imgui_demo.cpp
     backends/imgui_impl_glfw.cpp
     backends/imgui_impl_opengl3.cpp
+    imgui.h
 )
