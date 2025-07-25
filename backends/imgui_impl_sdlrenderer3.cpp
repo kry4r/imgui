@@ -41,6 +41,8 @@
 #if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wsign-conversion"    // warning: implicit conversion changes signedness
+#elif defined(__GNUC__)
+#pragma GCC diagnostic ignored "-Wfloat-equal"          // warning: comparing floating-point with '==' or '!=' is unsafe
 #endif
 
 // SDL
@@ -187,9 +189,8 @@ void ImGui_ImplSDLRenderer3_RenderDrawData(ImDrawData* draw_data, SDL_Renderer* 
     ImVec2 clip_scale = render_scale;
 
     // Render command lists
-    for (int n = 0; n < draw_data->CmdListsCount; n++)
+    for (const ImDrawList* draw_list : draw_data->CmdLists)
     {
-        const ImDrawList* draw_list = draw_data->CmdLists[n];
         const ImDrawVert* vtx_buffer = draw_list->VtxBuffer.Data;
         const ImDrawIdx* idx_buffer = draw_list->IdxBuffer.Data;
 

@@ -21,6 +21,7 @@
 
 // CHANGELOG
 // (minor and older changes stripped away, please see git history for details)
+//  2025-07-08: Made ImGui_ImplSDL2_GetContentScaleForWindow(), ImGui_ImplSDL2_GetContentScaleForDisplay() helpers return 1.0f on Emscripten and Android platforms, matching macOS logic. (#8742, #8733)
 //  2025-06-11: Added ImGui_ImplSDL2_GetContentScaleForWindow(SDL_Window* window) and ImGui_ImplSDL2_GetContentScaleForDisplay(int display_index) helper to facilitate making DPI-aware apps.
 //  2025-04-09: Don't attempt to call SDL_CaptureMouse() on drivers where we don't call SDL_GetGlobalMouseState(). (#8561)
 //  2025-03-21: Fill gamepad inputs and set ImGuiBackendFlags_HasGamepad regardless of ImGuiConfigFlags_NavEnableGamepad being set.
@@ -104,6 +105,7 @@
 // Clang warnings with -Weverything
 #if defined(__clang__)
 #pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wold-style-cast"                 // warning: use of old-style cast
 #pragma clang diagnostic ignored "-Wimplicit-int-float-conversion"  // warning: implicit conversion from 'xxx' to 'float' may lose precision
 #endif
 
@@ -117,12 +119,14 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten/em_js.h>
 #endif
+#undef Status // X11 headers are leaking this.
 
 #if SDL_VERSION_ATLEAST(2,0,4) && !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS) && !defined(__amigaos4__)
 #define SDL_HAS_CAPTURE_AND_GLOBAL_MOUSE    1
 #else
 #define SDL_HAS_CAPTURE_AND_GLOBAL_MOUSE    0
 #endif
+#define SDL_HAS_PER_MONITOR_DPI             SDL_VERSION_ATLEAST(2,0,4)
 #define SDL_HAS_VULKAN                      SDL_VERSION_ATLEAST(2,0,6)
 #define SDL_HAS_OPEN_URL                    SDL_VERSION_ATLEAST(2,0,14)
 #if SDL_HAS_VULKAN
@@ -433,7 +437,7 @@ bool ImGui_ImplSDL2_ProcessEvent(const SDL_Event* event)
             //    (event->type == SDL_KEYDOWN) ? "DOWN" : "UP  ", event->key.keysym.sym, SDL_GetKeyName(event->key.keysym.sym), event->key.keysym.scancode, SDL_GetScancodeName(event->key.keysym.scancode), event->key.keysym.mod);
             ImGuiKey key = ImGui_ImplSDL2_KeyEventToImGuiKey(event->key.keysym.sym, event->key.keysym.scancode);
             io.AddKeyEvent(key, (event->type == SDL_KEYDOWN));
-            io.SetKeyEventNativeData(key, event->key.keysym.sym, event->key.keysym.scancode, event->key.keysym.scancode); // To support legacy indexing (<1.87 user code). Legacy backend uses SDLK_*** as indices to IsKeyXXX() functions.
+            io.SetKeyEventNativeData(key, (int)event->key.keysym.sym, (int)event->key.keysym.scancode, (int)event->key.keysym.scancode); // To support legacy indexing (<1.87 user code). Legacy backend uses SDLK_*** as indices to IsKeyXXX() functions.
             return true;
         }
         case SDL_WINDOWEVENT:
@@ -465,6 +469,8 @@ bool ImGui_ImplSDL2_ProcessEvent(const SDL_Event* event)
             bd->WantUpdateGamepadsList = true;
             return true;
         }
+        default:
+            break;
     }
     return false;
 }
@@ -714,7 +720,7 @@ float ImGui_ImplSDL2_GetContentScaleForWindow(SDL_Window* window)
 float ImGui_ImplSDL2_GetContentScaleForDisplay(int display_index)
 {
 #if SDL_HAS_PER_MONITOR_DPI
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
     float dpi = 0.0f;
     if (SDL_GetDisplayDPI(display_index, &dpi, nullptr, nullptr) == 0)
         return dpi / 96.0f;

@@ -46,6 +46,12 @@
 // DirectX
 #include <d3d9.h>
 
+// Clang/GCC warnings with -Weverything
+#if defined(__clang__)
+#pragma clang diagnostic ignored "-Wold-style-cast"         // warning: use of old-style cast                            // yes, they are more terse.
+#pragma clang diagnostic ignored "-Wsign-conversion"        // warning: implicit conversion changes signedness
+#endif
+
 // DirectX data
 struct ImGui_ImplDX9_Data
 {
@@ -222,9 +228,8 @@ void ImGui_ImplDX9_RenderDrawData(ImDrawData* draw_data)
     // FIXME-OPT: This is a minor waste of resource, the ideal is to use imconfig.h and
     //  1) to avoid repacking colors:   #define IMGUI_USE_BGRA_PACKED_COLOR
     //  2) to avoid repacking vertices: #define IMGUI_OVERRIDE_DRAWVERT_STRUCT_LAYOUT struct ImDrawVert { ImVec2 pos; float z; ImU32 col; ImVec2 uv; }
-    for (int n = 0; n < draw_data->CmdListsCount; n++)
+    for (const ImDrawList* draw_list : draw_data->CmdLists)
     {
-        const ImDrawList* draw_list = draw_data->CmdLists[n];
         const ImDrawVert* vtx_src = draw_list->VtxBuffer.Data;
         for (int i = 0; i < draw_list->VtxBuffer.Size; i++)
         {
@@ -254,9 +259,8 @@ void ImGui_ImplDX9_RenderDrawData(ImDrawData* draw_data)
     int global_vtx_offset = 0;
     int global_idx_offset = 0;
     ImVec2 clip_off = draw_data->DisplayPos;
-    for (int n = 0; n < draw_data->CmdListsCount; n++)
+    for (const ImDrawList* draw_list : draw_data->CmdLists)
     {
-        const ImDrawList* draw_list = draw_data->CmdLists[n];
         for (int cmd_i = 0; cmd_i < draw_list->CmdBuffer.Size; cmd_i++)
         {
             const ImDrawCmd* pcmd = &draw_list->CmdBuffer[cmd_i];
@@ -368,8 +372,8 @@ static void ImGui_ImplDX9_CopyTextureRegion(bool tex_use_colors, const ImU32* sr
 #endif
     for (int y = 0; y < h; y++)
     {
-        ImU32* src_p = (ImU32*)((unsigned char*)src + src_pitch * y);
-        ImU32* dst_p = (ImU32*)((unsigned char*)dst + dst_pitch * y);
+        const ImU32* src_p = (const ImU32*)(const void*)((const unsigned char*)src + src_pitch * y);
+        ImU32* dst_p = (ImU32*)(void*)((unsigned char*)dst + dst_pitch * y);
         if (convert_rgba_to_bgra)
             for (int x = w; x > 0; x--, src_p++, dst_p++) // Convert copy
                 *dst_p = IMGUI_COL_TO_DX9_ARGB(*src_p);

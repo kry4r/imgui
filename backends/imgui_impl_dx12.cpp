@@ -20,6 +20,7 @@
 
 // CHANGELOG
 // (minor and older changes stripped away, please see git history for details)
+//  2025-06-19: Fixed build on MinGW. (#8702, #4594)
 //  2025-06-11: DirectX12: Added support for ImGuiBackendFlags_RendererHasTextures, for dynamic font atlas.
 //  2025-05-07: DirectX12: Honor draw_data->FramebufferScale to allow for custom backends and experiment using it (consistently with other renderer backends, even though in normal condition it is not set under Windows).
 //  2025-02-24: DirectX12: Fixed an issue where ImGui_ImplDX12_Init() signature change from 2024-11-15 combined with change from 2025-01-15 made legacy ImGui_ImplDX12_Init() crash. (#8429)
@@ -60,6 +61,15 @@
 #ifdef _MSC_VER
 #pragma comment(lib, "d3dcompiler") // Automatically link with d3dcompiler.lib as we are using D3DCompile() below.
 #endif
+
+// Clang/GCC warnings with -Weverything
+#if defined(__clang__)
+#pragma clang diagnostic ignored "-Wold-style-cast"         // warning: use of old-style cast                            // yes, they are more terse.
+#pragma clang diagnostic ignored "-Wsign-conversion"        // warning: implicit conversion changes signedness
+#endif
+
+// MinGW workaround, see #4594
+typedef decltype(D3D12SerializeRootSignature) *_PFN_D3D12_SERIALIZE_ROOT_SIGNATURE;
 
 // DirectX12 data
 struct ImGui_ImplDX12_RenderBuffers;
@@ -252,9 +262,8 @@ void ImGui_ImplDX12_RenderDrawData(ImDrawData* draw_data, ID3D12GraphicsCommandL
         return;
     ImDrawVert* vtx_dst = (ImDrawVert*)vtx_resource;
     ImDrawIdx* idx_dst = (ImDrawIdx*)idx_resource;
-    for (int n = 0; n < draw_data->CmdListsCount; n++)
+    for (const ImDrawList* draw_list : draw_data->CmdLists)
     {
-        const ImDrawList* draw_list = draw_data->CmdLists[n];
         memcpy(vtx_dst, draw_list->VtxBuffer.Data, draw_list->VtxBuffer.Size * sizeof(ImDrawVert));
         memcpy(idx_dst, draw_list->IdxBuffer.Data, draw_list->IdxBuffer.Size * sizeof(ImDrawIdx));
         vtx_dst += draw_list->VtxBuffer.Size;
@@ -285,9 +294,8 @@ void ImGui_ImplDX12_RenderDrawData(ImDrawData* draw_data, ID3D12GraphicsCommandL
     int global_idx_offset = 0;
     ImVec2 clip_off = draw_data->DisplayPos;
     ImVec2 clip_scale = draw_data->FramebufferScale;
-    for (int n = 0; n < draw_data->CmdListsCount; n++)
+    for (const ImDrawList* draw_list : draw_data->CmdLists)
     {
-        const ImDrawList* draw_list = draw_data->CmdLists[n];
         for (int cmd_i = 0; cmd_i < draw_list->CmdBuffer.Size; cmd_i++)
         {
             const ImDrawCmd* pcmd = &draw_list->CmdBuffer[cmd_i];
@@ -618,7 +626,7 @@ bool    ImGui_ImplDX12_CreateDeviceObjects()
                 return false;
         }
 
-        PFN_D3D12_SERIALIZE_ROOT_SIGNATURE D3D12SerializeRootSignatureFn = (PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)(void*)::GetProcAddress(d3d12_dll, "D3D12SerializeRootSignature");
+        _PFN_D3D12_SERIALIZE_ROOT_SIGNATURE D3D12SerializeRootSignatureFn = (_PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)(void*)::GetProcAddress(d3d12_dll, "D3D12SerializeRootSignature");
         if (D3D12SerializeRootSignatureFn == nullptr)
             return false;
 
@@ -796,6 +804,28 @@ void    ImGui_ImplDX12_InvalidateDeviceObjects()
     }
 }
 
+#ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
+static void ImGui_ImplDX12_InitLegacySingleDescriptorMode(ImGui_ImplDX12_InitInfo* init_info)
+{
+    // Wrap legacy behavior of passing space for a single descriptor
+    IM_ASSERT(init_info->LegacySingleSrvCpuDescriptor.ptr != 0 && init_info->LegacySingleSrvGpuDescriptor.ptr != 0);
+    init_info->SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu_handle)
+    {
+        ImGui_ImplDX12_Data* bd = ImGui_ImplDX12_GetBackendData();
+        IM_ASSERT(bd->LegacySingleDescriptorUsed == false && "Only 1 simultaneous texture allowed with legacy ImGui_ImplDX12_Init() signature!");
+        *out_cpu_handle = bd->InitInfo.LegacySingleSrvCpuDescriptor;
+        *out_gpu_handle = bd->InitInfo.LegacySingleSrvGpuDescriptor;
+        bd->LegacySingleDescriptorUsed = true;
+    };
+    init_info->SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_GPU_DESCRIPTOR_HANDLE)
+    {
+        ImGui_ImplDX12_Data* bd = ImGui_ImplDX12_GetBackendData();
+        IM_ASSERT(bd->LegacySingleDescriptorUsed == true);
+        bd->LegacySingleDescriptorUsed = false;
+    };
+}
+#endif
+
 bool ImGui_ImplDX12_Init(ImGui_ImplDX12_InitInfo* init_info)
 {
     ImGuiIO& io = ImGui::GetIO();
@@ -822,24 +852,7 @@ bool ImGui_ImplDX12_Init(ImGui_ImplDX12_InitInfo* init_info)
 
 #ifndef IMGUI_DISABLE_OBSOLETE_FUNCTIONS
     if (init_info->SrvDescriptorAllocFn == nullptr)
-    {
-        // Wrap legacy behavior of passing space for a single descriptor
-        IM_ASSERT(init_info->LegacySingleSrvCpuDescriptor.ptr != 0 && init_info->LegacySingleSrvGpuDescriptor.ptr != 0);
-        init_info->SrvDescriptorAllocFn = [](ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu_handle, D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu_handle)
-        {
-            ImGui_ImplDX12_Data* bd = ImGui_ImplDX12_GetBackendData();
-            IM_ASSERT(bd->LegacySingleDescriptorUsed == false && "Only 1 simultaneous texture allowed with legacy ImGui_ImplDX12_Init() signature!");
-            *out_cpu_handle = bd->InitInfo.LegacySingleSrvCpuDescriptor;
-            *out_gpu_handle = bd->InitInfo.LegacySingleSrvGpuDescriptor;
-            bd->LegacySingleDescriptorUsed = true;
-        };
-        init_info->SrvDescriptorFreeFn = [](ImGui_ImplDX12_InitInfo*, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_GPU_DESCRIPTOR_HANDLE)
-        {
-            ImGui_ImplDX12_Data* bd = ImGui_ImplDX12_GetBackendData();
-            IM_ASSERT(bd->LegacySingleDescriptorUsed == true);
-            bd->LegacySingleDescriptorUsed = false;
-        };
-    }
+        ImGui_ImplDX12_InitLegacySingleDescriptorMode(init_info);
 #endif
     IM_ASSERT(init_info->SrvDescriptorAllocFn != nullptr && init_info->SrvDescriptorFreeFn != nullptr);
 
@@ -910,7 +923,8 @@ void ImGui_ImplDX12_NewFrame()
     IM_ASSERT(bd != nullptr && "Context or backend not initialized! Did you call ImGui_ImplDX12_Init()?");
 
     if (!bd->pPipelineState)
-        ImGui_ImplDX12_CreateDeviceObjects();
+        if (!ImGui_ImplDX12_CreateDeviceObjects())
+            IM_ASSERT(0 && "ImGui_ImplDX12_CreateDeviceObjects() failed!");
 }
 
 //-----------------------------------------------------------------------------
